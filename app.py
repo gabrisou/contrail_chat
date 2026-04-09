@@ -160,6 +160,26 @@ def chat():
     # Monta o histórico de mensagens
     messages = historico + [{"role": "user", "content": pergunta}]
 
+    def serializar_content(content):
+        """Converte blocos do SDK Anthropic para dicts serializáveis"""
+        result = []
+        for block in content:
+            if hasattr(block, 'type'):
+                if block.type == 'text':
+                    result.append({"type": "text", "text": block.text})
+                elif block.type == 'tool_use':
+                    result.append({
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input
+                    })
+                else:
+                    result.append({"type": block.type})
+            elif isinstance(block, dict):
+                result.append(block)
+        return result
+
     try:
         # Loop agentic — Claude pode usar ferramentas múltiplas vezes
         while True:
@@ -171,8 +191,11 @@ def chat():
                 messages=messages
             )
 
+            # Serializa o content para poder adicionar ao histórico
+            content_serializado = serializar_content(response.content)
+
             # Adiciona resposta ao histórico
-            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "assistant", "content": content_serializado})
 
             # Se terminou sem usar ferramenta, retorna
             if response.stop_reason == "end_turn":
@@ -189,8 +212,8 @@ def chat():
             if response.stop_reason == "tool_use":
                 tool_results = []
                 for block in response.content:
-                    if block.type == "tool_use":
-                        nome  = block.name
+                    if hasattr(block, 'type') and block.type == "tool_use":
+                        nome   = block.name
                         inputs = block.input
 
                         # Executa a ferramenta
