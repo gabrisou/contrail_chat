@@ -1,267 +1,248 @@
 """
-Contrail Chat — Servidor Flask + Claude API + MySQL
-Hospede no Railway ou Render
+Contrail Chat - Servidor Flask + Claude API + API TI Contrail
+Deploy no Railway
 """
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import mysql.connector
 import anthropic
+import requests
 import json
 import os
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
-# ── Configurações ──────────────────────────────────
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "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")
-DB_HOST     = os.getenv("DB_HOST",     "201.20.10.225")
-DB_PORT     = int(os.getenv("DB_PORT", "3306"))
-DB_NAME     = os.getenv("DB_NAME",     "sim")
-DB_USER     = os.getenv("DB_USER",     "acessodb")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "fR27dM0l{5{x4(29;'>t")
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    return response
+
+# Configuracoes
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+CONTRAIL_API_BASE = os.getenv("CONTRAIL_API_BASE", "https://api-read.contrail.com.br")
+CONTRAIL_API_KEY  = os.getenv("CONTRAIL_API_KEY",  "3Ydk7CP3JRJMOH9zU1qKSk3VT5k0bRMmh77FaeZsVPdOCXff")
+HEADERS_TI        = {"X-API-Key": CONTRAIL_API_KEY}
+LIMIT_MAX         = 500
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-# ── Conecta ao MySQL ───────────────────────────────
-def get_db():
-    return mysql.connector.connect(
-        host=DB_HOST, port=DB_PORT,
-        database=DB_NAME, user=DB_USER,
-        password=DB_PASSWORD, connection_timeout=15
-    )
-
-# ── Ferramentas disponíveis para o Claude ─────────
-def consultar_sql(query: str) -> str:
-    """Executa uma query SELECT no banco da Contrail"""
+# Funcoes de consulta
+def consultar_endpoint(endpoint, params):
     try:
-        # Segurança: só permite SELECT
-        q = query.strip().upper()
-        if not q.startswith("SELECT"):
-            return "Erro: apenas consultas SELECT são permitidas."
-        conn = get_db()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        conn.close()
-        if not rows:
-            return "Nenhum resultado encontrado."
-        # Limita a 100 linhas para não estourar contexto
-        if len(rows) > 100:
-            rows = rows[:100]
-            return json.dumps(rows, ensure_ascii=False, default=str) + "\n(resultado limitado a 100 linhas)"
-        return json.dumps(rows, ensure_ascii=False, default=str)
+        if "limit" in params:
+            params["limit"] = min(int(params["limit"]), LIMIT_MAX)
+        r = requests.get(
+            f"{CONTRAIL_API_BASE}/api/v1/{endpoint}",
+            headers=HEADERS_TI,
+            params=params,
+            timeout=30
+        )
+        return r.json()
     except Exception as e:
-        return f"Erro na consulta: {str(e)}"
+        return {"erro": str(e)}
 
-def listar_tabelas() -> str:
-    """Lista as tabelas disponíveis no banco"""
+def meta_endpoint(endpoint):
     try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute("SHOW TABLES")
-        tables = [row[0] for row in cursor.fetchall()]
-        conn.close()
-        return json.dumps(tables, ensure_ascii=False)
+        r = requests.get(
+            f"{CONTRAIL_API_BASE}/api/v1/meta/{endpoint}",
+            headers=HEADERS_TI,
+            timeout=15
+        )
+        return r.json()
     except Exception as e:
-        return f"Erro: {str(e)}"
+        return {"erro": str(e)}
 
-def descrever_tabela(tabela: str) -> str:
-    """Descreve as colunas de uma tabela"""
-    try:
-        conn = get_db()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute(f"DESCRIBE {tabela}")
-        cols = cursor.fetchall()
-        conn.close()
-        return json.dumps(cols, ensure_ascii=False, default=str)
-    except Exception as e:
-        return f"Erro: {str(e)}"
+def chamar_ferramenta(nome, inputs):
+    mapa = {
+        "consultar_financeiro":  "financeiro",
+        "consultar_tracking":    "tracking",
+        "consultar_documentos":  "documentos",
+        "consultar_movimentos":  "movimentos-cheio",
+    }
+    mapa_meta = {
+        "meta_financeiro":  "financeiro",
+        "meta_tracking":    "tracking",
+        "meta_documentos":  "documentos",
+        "meta_movimentos":  "movimentos-cheio",
+    }
+    if nome in mapa:
+        return json.dumps(consultar_endpoint(mapa[nome], inputs), ensure_ascii=False, default=str)
+    if nome in mapa_meta:
+        return json.dumps(meta_endpoint(mapa_meta[nome]), ensure_ascii=False, default=str)
+    return "Ferramenta nao encontrada"
 
-# ── Definição das ferramentas para o Claude ────────
+# Ferramentas para o Claude
 TOOLS = [
     {
-        "name": "consultar_sql",
-        "description": "Executa uma query SELECT no banco de dados da Contrail Logística. Use para responder perguntas sobre viagens, carretas, motoristas, faturamento, etc.",
+        "name": "consultar_financeiro",
+        "description": (
+            "Consulta dados financeiros e de viagens da Contrail (bi_financeiro). "
+            "Use para perguntas sobre viagens, fretes, carretas, clientes, faturamento, operacoes. "
+            "Filtros: eq_<coluna>=valor (exato), like_<coluna>=valor (parcial), "
+            "date_column=<coluna>, date_start=YYYY-MM-DD, date_end=YYYY-MM-DD, "
+            "order_by=<coluna>, order_dir=asc|desc, limit, offset."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Query SQL SELECT válida para executar no banco sim.bi_financeiro"
-                }
-            },
-            "required": ["query"]
+                "limit":       {"type": "integer", "description": "Numero de registros max 500"},
+                "offset":      {"type": "integer", "description": "Paginacao"},
+                "order_by":    {"type": "string",  "description": "Coluna para ordenar"},
+                "order_dir":   {"type": "string",  "description": "asc ou desc"},
+                "date_column": {"type": "string",  "description": "Coluna de data"},
+                "date_start":  {"type": "string",  "description": "Data inicio YYYY-MM-DD"},
+                "date_end":    {"type": "string",  "description": "Data fim YYYY-MM-DD"}
+            }
         }
     },
     {
-        "name": "listar_tabelas",
-        "description": "Lista todas as tabelas disponíveis no banco de dados",
-        "input_schema": {
-            "type": "object",
-            "properties": {}
-        }
-    },
-    {
-        "name": "descrever_tabela",
-        "description": "Mostra as colunas e tipos de dados de uma tabela específica",
+        "name": "consultar_tracking",
+        "description": "Consulta dados de tracking/rastreamento. Mesmos filtros do financeiro.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "tabela": {
-                    "type": "string",
-                    "description": "Nome da tabela para descrever"
-                }
-            },
-            "required": ["tabela"]
+                "limit": {"type": "integer"}, "offset": {"type": "integer"},
+                "order_by": {"type": "string"}, "order_dir": {"type": "string"},
+                "date_column": {"type": "string"}, "date_start": {"type": "string"}, "date_end": {"type": "string"}
+            }
         }
+    },
+    {
+        "name": "consultar_documentos",
+        "description": "Consulta documentos da Contrail (CTe, NFe). Mesmos filtros do financeiro.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer"}, "offset": {"type": "integer"},
+                "order_by": {"type": "string"}, "order_dir": {"type": "string"},
+                "date_column": {"type": "string"}, "date_start": {"type": "string"}, "date_end": {"type": "string"}
+            }
+        }
+    },
+    {
+        "name": "consultar_movimentos",
+        "description": "Consulta movimentos de cheio (sistiju). Mesmos filtros do financeiro.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer"}, "offset": {"type": "integer"},
+                "order_by": {"type": "string"}, "order_dir": {"type": "string"},
+                "date_column": {"type": "string"}, "date_start": {"type": "string"}, "date_end": {"type": "string"}
+            }
+        }
+    },
+    {
+        "name": "meta_financeiro",
+        "description": "Retorna colunas disponiveis e tipos do financeiro. Use quando nao souber o nome exato de uma coluna.",
+        "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "meta_tracking",
+        "description": "Retorna colunas disponiveis do tracking.",
+        "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "meta_documentos",
+        "description": "Retorna colunas disponiveis dos documentos.",
+        "input_schema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "meta_movimentos",
+        "description": "Retorna colunas disponiveis dos movimentos.",
+        "input_schema": {"type": "object", "properties": {}}
     }
 ]
 
-# ── System prompt ──────────────────────────────────
-SYSTEM_PROMPT = """Você é o assistente de dados da Contrail Logística S.A., uma empresa de transporte multimodal de Jundiaí-SP.
+SYSTEM = (
+    "Voce e o assistente de dados da Contrail Logistica S.A., Jundiai-SP.\n\n"
+    "Voce acessa a API oficial da Contrail com 4 fontes:\n"
+    "- financeiro: viagens, fretes, carretas, clientes, faturamento\n"
+    "- tracking: rastreamento de veiculos\n"
+    "- documentos: CTe, NFe e outros documentos\n"
+    "- movimentos-cheio: movimentos de containers cheios\n\n"
+    "Como usar os filtros:\n"
+    "- Filtro exato: eq_cliente=UNIMETAL\n"
+    "- Filtro parcial: like_cliente=UNIMETAL\n"
+    "- Filtro de data: date_column=hora_planejamento, date_start=2026-04-04, date_end=2026-04-04\n"
+    "- Ordenacao: order_by=hora_planejamento, order_dir=desc\n\n"
+    "REGRAS:\n"
+    "- Use meta_financeiro se nao souber os nomes das colunas\n"
+    "- Nao adicione filtros que o usuario nao pediu\n"
+    "- Responda em portugues brasileiro\n"
+    "- Formate valores monetarios como R$ X.XXX\n"
+    "- Se precisar de mais dados use offset para paginar"
+)
 
-Você tem acesso ao banco de dados operacional da empresa (MySQL, banco: sim) e pode responder perguntas sobre:
-- Viagens e fretes (tabela: bi_financeiro)
-- Carretas próprias, agregados e transportadoras
-- Faturamento, tarifas e custos
-- Motoristas e operações
-- Clientes e grupos de clientes
-
-Principais colunas da tabela bi_financeiro:
-- carreta: placa da carreta
-- transportadora: empresa transportadora (ex: AGREGADOS (CONTRAIL), CONTRAIL DH)
-- data_viagem / hora_planejamento: data da viagem
-- cliente, grupo_cliente: cliente e grupo
-- trajeto, km_trajeto: rota e distância
-- operacao: tipo (CABOTAGEM - IMPORTACAO, EXPORTACAO, VAZIO, etc)
-- tarifa_total_fornecedor: valor pago ao fornecedor
-- especificacao: tipo de serviço
-
-Regras:
-- Responda sempre em português brasileiro
-- Seja objetivo e direto com os números
-- Formate valores monetários como R$ X.XXX
-- Ao fazer consultas, sempre filtre por YEAR(hora_planejamento) = 2026 salvo solicitação contrária
-- Nunca execute UPDATE, INSERT, DELETE ou DROP
-- Se não souber a resposta exata, diga que vai consultar o banco
-
-Quando receber uma pergunta, pense na melhor query SQL para respondê-la e execute."""
-
-# ── Endpoint principal do chat ─────────────────────
+# Endpoint do chat
 @app.route("/chat", methods=["POST"])
 def chat():
-    data    = request.json
+    data     = request.json
     pergunta = data.get("mensagem", "")
     historico = data.get("historico", [])
 
     if not pergunta:
         return jsonify({"erro": "Mensagem vazia"}), 400
 
-    # Monta o histórico de mensagens
     messages = historico + [{"role": "user", "content": pergunta}]
 
-    def serializar_content(content):
-        """Converte blocos do SDK Anthropic para dicts serializáveis"""
+    def serializar(content):
         result = []
         for block in content:
             if hasattr(block, 'type'):
                 if block.type == 'text':
                     result.append({"type": "text", "text": block.text})
                 elif block.type == 'tool_use':
-                    result.append({
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input
-                    })
-                else:
-                    result.append({"type": block.type})
+                    result.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
             elif isinstance(block, dict):
                 result.append(block)
         return result
 
     try:
-        # Loop agentic — Claude pode usar ferramentas múltiplas vezes
         while True:
             response = client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=4096,
-                system=SYSTEM_PROMPT,
+                system=SYSTEM,
                 tools=TOOLS,
                 messages=messages
             )
 
-            # Serializa o content para poder adicionar ao histórico
-            content_serializado = serializar_content(response.content)
+            content_s = serializar(response.content)
+            messages.append({"role": "assistant", "content": content_s})
 
-            # Adiciona resposta ao histórico
-            messages.append({"role": "assistant", "content": content_serializado})
-
-            # Se terminou sem usar ferramenta, retorna
             if response.stop_reason == "end_turn":
                 texto = ""
                 for block in response.content:
                     if hasattr(block, "text"):
                         texto += block.text
-                return jsonify({
-                    "resposta": texto,
-                    "historico": messages
-                })
+                return jsonify({"resposta": texto, "historico": messages})
 
-            # Processa chamadas de ferramentas
             if response.stop_reason == "tool_use":
                 tool_results = []
                 for block in response.content:
                     if hasattr(block, 'type') and block.type == "tool_use":
-                        nome   = block.name
-                        inputs = block.input
-
-                        # Executa a ferramenta
-                        if nome == "consultar_sql":
-                            resultado = consultar_sql(inputs.get("query", ""))
-                        elif nome == "listar_tabelas":
-                            resultado = listar_tabelas()
-                        elif nome == "descrever_tabela":
-                            resultado = descrever_tabela(inputs.get("tabela", ""))
-                        else:
-                            resultado = "Ferramenta não encontrada"
-
+                        resultado = chamar_ferramenta(block.name, block.input)
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
                             "content": resultado
                         })
-
-                # Adiciona resultados e continua o loop
                 messages.append({"role": "user", "content": tool_results})
 
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
-# ── Health check ───────────────────────────────────
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "app": "Contrail Chat"})
+    return jsonify({"status": "ok", "app": "Contrail Chat", "api": CONTRAIL_API_BASE})
 
-# ── IP externo do servidor ─────────────────────────
-@app.route("/ip", methods=["GET"])
-def meu_ip():
+@app.route("/ping-api", methods=["GET"])
+def ping_api():
     try:
-        import urllib.request
-        ip = urllib.request.urlopen("https://api.ipify.org").read().decode("utf-8")
-        return jsonify({"ip_externo": ip})
-    except Exception as e:
-        return jsonify({"erro": str(e)})
-
-# ── Teste de conexão MySQL ─────────────────────────
-@app.route("/ping-db", methods=["GET"])
-def ping_db():
-    try:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        conn.close()
-        return jsonify({"status": "ok", "mysql": "conectado"})
+        r = requests.get(f"{CONTRAIL_API_BASE}/health", headers=HEADERS_TI, timeout=10)
+        return jsonify({"status": "ok", "contrail_api": r.json()})
     except Exception as e:
         return jsonify({"status": "erro", "detalhe": str(e)})
 
