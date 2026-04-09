@@ -243,6 +243,28 @@ def chat():
 def health():
     return jsonify({"status": "ok", "app": "Contrail Chat"})
 
+# ── IP externo do servidor ─────────────────────────
+@app.route("/ip", methods=["GET"])
+def meu_ip():
+    try:
+        import urllib.request
+        ip = urllib.request.urlopen("https://api.ipify.org").read().decode("utf-8")
+        return jsonify({"ip_externo": ip})
+    except Exception as e:
+        return jsonify({"erro": str(e)})
+
+# ── Teste de conexão MySQL ─────────────────────────
+@app.route("/ping-db", methods=["GET"])
+def ping_db():
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        conn.close()
+        return jsonify({"status": "ok", "mysql": "conectado"})
+    except Exception as e:
+        return jsonify({"status": "erro", "detalhe": str(e)})
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
