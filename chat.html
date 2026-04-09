@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Contrail · Chat de Dados</title>
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&family=Montserrat:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --verde: #007351;
+  --lime:  #76B82A;
+  --bg:    #f5faf7;
+  --bg2:   #fff;
+  --line:  #d0e6da;
+  --ink:   #2d2d2d;
+  --muted: #8aab98;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Open Sans', sans-serif;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.header {
+  background: #fff;
+  border-bottom: 3px solid var(--verde);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+.header-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--lime);
+}
+.header-title {
+  font-family: 'Montserrat', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--verde);
+}
+.header-sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+/* Chat area */
+.chat-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Mensagens */
+.msg {
+  max-width: 75%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.msg.user {
+  align-self: flex-end;
+  background: var(--verde);
+  color: #fff;
+  border-bottom-right-radius: 3px;
+}
+.msg.assistant {
+  align-self: flex-start;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 3px;
+  color: var(--ink);
+}
+.msg.thinking {
+  align-self: flex-start;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 3px;
+  color: var(--muted);
+  font-style: italic;
+  font-size: 12px;
+}
+.msg-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  opacity: 0.7;
+}
+
+/* Sugestões */
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 20px 12px;
+}
+.sug {
+  padding: 6px 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  font-size: 11px;
+  color: var(--verde);
+  cursor: pointer;
+  transition: all .15s;
+}
+.sug:hover {
+  background: var(--verde);
+  color: #fff;
+  border-color: var(--verde);
+}
+
+/* Input area */
+.input-area {
+  background: #fff;
+  border-top: 1px solid var(--line);
+  padding: 12px 20px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+.input-area textarea {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-family: 'Open Sans', sans-serif;
+  font-size: 13px;
+  resize: none;
+  outline: none;
+  max-height: 120px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.input-area textarea:focus {
+  border-color: var(--verde);
+}
+.btn-send {
+  background: var(--verde);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-family: 'Montserrat', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .15s;
+  white-space: nowrap;
+}
+.btn-send:hover { background: #005a3e; }
+.btn-send:disabled { background: var(--muted); cursor: not-allowed; }
+
+.btn-clear {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.btn-clear:hover { color: var(--verde); border-color: var(--verde); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-dot"></div>
+  <div>
+    <div class="header-title">Contrail · Assistente de Dados</div>
+  </div>
+  <div class="header-sub">Powered by Claude · Banco sim.bi_financeiro</div>
+</div>
+
+<div class="chat-area" id="chatArea">
+  <div class="msg assistant">
+    <div class="msg-label">Assistente</div>
+    Olá! Sou o assistente de dados da Contrail. Posso consultar o banco de dados e responder perguntas sobre viagens, faturamento, carretas, motoristas e muito mais.<br><br>
+    Como posso ajudar?
+  </div>
+</div>
+
+<div class="suggestions" id="suggestions">
+  <div class="sug" onclick="enviarSugestao(this)">Qual a utilização da frota em março?</div>
+  <div class="sug" onclick="enviarSugestao(this)">Quais carretas estão sem viagem hoje?</div>
+  <div class="sug" onclick="enviarSugestao(this)">Qual o faturamento total de abril?</div>
+  <div class="sug" onclick="enviarSugestao(this)">Top 5 carretas com mais viagens em 2026</div>
+  <div class="sug" onclick="enviarSugestao(this)">Quantas viagens fez a FOL4F13?</div>
+</div>
+
+<div class="input-area">
+  <textarea id="inputMsg" placeholder="Pergunte algo sobre os dados da Contrail..." rows="1"
+    onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();enviar()}"
+    oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"></textarea>
+  <button class="btn-clear" onclick="limpar()">Limpar</button>
+  <button class="btn-send" id="btnSend" onclick="enviar()">Enviar</button>
+</div>
+
+<script>
+// ── Configuração — URL do seu servidor ─────────────
+// Troca pela URL do Railway depois do deploy
+const API_URL = 'https://SEU-APP.railway.app';
+
+let historico = [];
+
+function addMsg(texto, tipo) {
+  const area  = document.getElementById('chatArea');
+  const div   = document.createElement('div');
+  div.className = `msg ${tipo}`;
+  const label = tipo === 'user' ? 'Você' : 'Assistente';
+  div.innerHTML = `<div class="msg-label">${label}</div>${escapeHtml(texto)}`;
+  area.appendChild(div);
+  area.scrollTop = area.scrollHeight;
+  return div;
+}
+
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+}
+
+async function enviar() {
+  const input = document.getElementById('inputMsg');
+  const btn   = document.getElementById('btnSend');
+  const msg   = input.value.trim();
+  if(!msg) return;
+
+  // Esconde sugestões após primeira mensagem
+  document.getElementById('suggestions').style.display = 'none';
+
+  addMsg(msg, 'user');
+  input.value = '';
+  input.style.height = 'auto';
+  btn.disabled = true;
+
+  // Mostra "pensando..."
+  const area     = document.getElementById('chatArea');
+  const thinking = document.createElement('div');
+  thinking.className = 'msg thinking';
+  thinking.innerHTML = '<div class="msg-label">Assistente</div>Consultando banco de dados...';
+  area.appendChild(thinking);
+  area.scrollTop = area.scrollHeight;
+
+  try {
+    const resp = await fetch(`${API_URL}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true'
+      },
+      body: JSON.stringify({ mensagem: msg, historico })
+    });
+
+    const data = await resp.json();
+    thinking.remove();
+
+    if(data.erro) {
+      addMsg('Erro: ' + data.erro, 'assistant');
+    } else {
+      addMsg(data.resposta, 'assistant');
+      historico = data.historico;
+    }
+  } catch(e) {
+    thinking.remove();
+    addMsg('Erro de conexão. Verifique se o servidor está rodando.', 'assistant');
+  }
+
+  btn.disabled = false;
+  input.focus();
+}
+
+function enviarSugestao(el) {
+  document.getElementById('inputMsg').value = el.textContent;
+  enviar();
+}
+
+function limpar() {
+  historico = [];
+  const area = document.getElementById('chatArea');
+  area.innerHTML = `<div class="msg assistant">
+    <div class="msg-label">Assistente</div>
+    Conversa reiniciada. Como posso ajudar?
+  </div>`;
+  document.getElementById('suggestions').style.display = 'flex';
+}
+</script>
+</body>
+</html>
